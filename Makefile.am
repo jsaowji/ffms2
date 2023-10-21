@@ -41,8 +41,10 @@ src_core_libffms2_la_SOURCES = \
 	src/core/zipfile.h \
 	src/vapoursynth/VapourSynth4.h \
 	src/vapoursynth/VSHelper4.h \
-	src/vapoursynth/vapoursource4.cpp \
-	src/vapoursynth/vapoursource4.h \
+	src/vapoursynth/vapourvideosource4.cpp \
+	src/vapoursynth/vapourvideosource4.h \
+	src/vapoursynth/vapouraudiosource4.cpp \
+	src/vapoursynth/vapouraudiosource4.h \
 	src/vapoursynth/vapoursynth4.cpp
 
 if AVISYNTH

@@ -19,7 +19,8 @@
 //  THE SOFTWARE.
 
 #include "ffms.h"
-#include "vapoursource4.h"
+#include "vapouraudiosource4.h"
+#include "vapourvideosource4.h"
 #include "VSHelper4.h"
 #include "../core/utils.h"
 
@@ -100,7 +101,7 @@ static void VS_CC CreateIndex(const VSMap *in, VSMap *out, void *, VSCore *, con
     FFMS_Deinit();
 }
 
-static void VS_CC CreateSource(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI *vsapi) {
+static void VS_CC CreateVideoSource(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI *vsapi) {
     FFMS_Init(0, 0);
 
     char ErrorMsg[1024];
@@ -210,12 +211,99 @@ static void VS_CC CreateSource(const VSMap *in, VSMap *out, void *, VSCore *core
         return vsapi->mapSetError(out, e.what());
     }
 
-    VSNode *node = vsapi->createVideoFilter2("Source", vs->GetVideoInfo(), VSVideoSource4::GetFrame, VSVideoSource4::Free, fmUnordered, nullptr, 0, vs, core);
+    VSNode *node = vsapi->createVideoFilter2("VideoSource", vs->GetVideoInfo(), VSVideoSource4::GetFrame, VSVideoSource4::Free, fmUnordered, nullptr, 0, vs, core);
     vs->SetCacheThreshold(vsapi->setLinearFilter(node));
     vsapi->mapConsumeNode(out, "clip", node, maAppend);
 
     FFMS_DestroyIndex(Index);
 }
+
+
+
+static void VS_CC CreateAudioSource(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI *vsapi) {
+    FFMS_Init(0, 0);
+
+    char ErrorMsg[1024];
+    FFMS_ErrorInfo E;
+    E.Buffer = ErrorMsg;
+    E.BufferSize = sizeof(ErrorMsg);
+    int err;
+
+    const char *Source = vsapi->mapGetData(in, "source", 0, nullptr);
+    int Track = vsapi->mapGetIntSaturated(in, "track", 0, &err);
+    if (err)
+        Track = -1;
+    bool Cache = !!vsapi->mapGetInt(in, "cache", 0, &err);
+    if (err)
+        Cache = true;
+    const char *CacheFile = vsapi->mapGetData(in, "cachefile", 0, &err);
+    int AudioMode = vsapi->mapGetIntSaturated(in, "mode", 0, &err);
+    if (err)
+        AudioMode = FFMS_DELAY_NO_SHIFT;
+    if (Track <= -2)
+        return vsapi->mapSetError(out, "Source: No audio track selected");
+    
+    FFMS_Index *Index = nullptr;
+    std::string DefaultCache;
+    if (Cache) {
+        if (CacheFile && *CacheFile) {
+            if (IsSamePath(Source, CacheFile))
+                return vsapi->mapSetError(out, "Source: Cache will overwrite the source");
+            Index = FFMS_ReadIndex(CacheFile, &E);
+        } else {
+            DefaultCache = Source;
+            DefaultCache += "_audio";
+            DefaultCache += ".ffindex";
+            CacheFile = DefaultCache.c_str();
+            Index = FFMS_ReadIndex(CacheFile, &E);
+            // Reindex if the index doesn't match the file and its name wasn't
+            // explicitly given
+            if (Index && FFMS_IndexBelongsToFile(Index, Source, nullptr) != FFMS_ERROR_SUCCESS) {
+                FFMS_DestroyIndex(Index);
+                Index = nullptr;
+            }
+        }
+    }
+
+    if (!Index) {
+        FFMS_Indexer *Indexer = FFMS_CreateIndexer(Source, &E);
+        if (!Indexer)
+            return vsapi->mapSetError(out, (std::string("Index: ") + E.Buffer).c_str());
+        FFMS_TrackTypeIndexSettings(Indexer, FFMS_TYPE_AUDIO, 1, 0);
+        Index = FFMS_DoIndexing2(Indexer, FFMS_IEH_CLEAR_TRACK, &E);
+        if (!Index)
+            return vsapi->mapSetError(out, (std::string("Index: ") + E.Buffer).c_str());
+
+        if (Cache)
+            if (FFMS_WriteIndex(CacheFile, Index, &E)) {
+                FFMS_DestroyIndex(Index);
+                return vsapi->mapSetError(out, (std::string("Index: ") + E.Buffer).c_str());
+            }
+    }
+
+    if (Track == -1)
+        Track = FFMS_GetFirstIndexedTrackOfType(Index, FFMS_TYPE_AUDIO, &E);
+    if (Track < 0) {
+        FFMS_DestroyIndex(Index);
+        return vsapi->mapSetError(out, "Source: No audio track found");
+    }
+
+    VSAudioSource4 *vs;
+    try {
+        vs = new VSAudioSource4(Source, Track, AudioMode, Index, vsapi, core);
+    } catch (std::exception const& e) {
+        FFMS_DestroyIndex(Index);
+        return vsapi->mapSetError(out, e.what());
+    }
+
+    //vsapi->createAudioFilter(out,"asd",&vsaudioInfo,&getFrame,&freeFilter,fmUnordered,0,numDeps,userData,core);
+    VSNode *node = vsapi->createAudioFilter2("Source", vs->GetAudioInfo(), VSAudioSource4::GetFrame, VSAudioSource4::Free, fmUnordered, nullptr, 0, vs, core);
+    vsapi->mapConsumeNode(out, "clip", node, maAppend);
+
+    FFMS_DestroyIndex(Index);
+}
+
+
 
 static void VS_CC GetLogLevel(const VSMap *, VSMap *out, void *, VSCore *, const VSAPI *vsapi) {
     vsapi->mapSetInt(out, "level", FFMS_GetLogLevel(), maReplace);
@@ -236,7 +324,8 @@ static void VS_CC GetVersion(const VSMap *, VSMap *out, void *, VSCore *, const 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
     vspapi->configPlugin("com.vapoursynth.ffms2", "ffms2", "FFmpegSource 2 for VapourSynth", FFMS_GetVersion(), VAPOURSYNTH_API_VERSION, 0, plugin);
     vspapi->registerFunction("Index", "source:data;cachefile:data:opt;indextracks:int[]:opt;errorhandling:int:opt;overwrite:int:opt;enable_drefs:int:opt;use_absolute_path:int:opt;", "result:data;", CreateIndex, nullptr, plugin);
-    vspapi->registerFunction("Source", "source:data;track:int:opt;cache:int:opt;cachefile:data:opt;fpsnum:int:opt;fpsden:int:opt;threads:int:opt;timecodes:data:opt;seekmode:int:opt;width:int:opt;height:int:opt;resizer:data:opt;format:int:opt;alpha:int:opt;", "clip:vnode;", CreateSource, nullptr, plugin);
+    vspapi->registerFunction("VideoSource", "source:data;track:int:opt;cache:int:opt;cachefile:data:opt;fpsnum:int:opt;fpsden:int:opt;threads:int:opt;timecodes:data:opt;seekmode:int:opt;width:int:opt;height:int:opt;resizer:data:opt;format:int:opt;alpha:int:opt;", "clip:vnode;", CreateVideoSource, nullptr, plugin);
+    vspapi->registerFunction("AudioSource", "source:data;track:int:opt;cache:int:opt;cachefile:data:opt;mode:int:opt", "clip:anode;", CreateAudioSource, nullptr, plugin);
     vspapi->registerFunction("GetLogLevel", "", "level:int;", GetLogLevel, nullptr, plugin);
     vspapi->registerFunction("SetLogLevel", "level:int;", "level:int;", SetLogLevel, nullptr, plugin);
     vspapi->registerFunction("Version", "", "version:data;", GetVersion, nullptr, plugin);

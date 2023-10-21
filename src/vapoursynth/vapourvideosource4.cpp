@@ -18,7 +18,7 @@
 //  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //  THE SOFTWARE.
 
-#include "vapoursource4.h"
+#include "vapourvideosource4.h"
 #include "VSHelper4.h"
 #include "../core/utils.h"
 

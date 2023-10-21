@@ -91,3 +91,7 @@ m4/lt~obsolete.m4
 
 # Generated Makefile
 Makefile
+
+
+compile_flags.txt
+test.py
